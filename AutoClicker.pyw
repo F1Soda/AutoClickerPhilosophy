@@ -1,17 +1,44 @@
-import selenium.common.exceptions
-from selenium.webdriver.common.by import By
-from openpyxl import load_workbook
-from selenium import webdriver
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as ec
-from enum import Enum
+try:
+    import selenium.common.exceptions
+    from selenium.webdriver.common.by import By
+    from openpyxl import load_workbook
+    from selenium import webdriver
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as ec
+    from enum import Enum
 
-import re
-import pickle
-import time
-import tkinter as tk
-import threading
-import keyboard
+    import re
+    import pickle
+    import time
+    import tkinter as tk
+    import threading
+    import keyboard
+except:
+    import pip
+
+    pip.main(['install', '--quiet', 'selenium'])
+    pip.main(['install', '--quiet', 'openpyxl'])
+    pip.main(['install', '--quiet', 'enum'])
+    pip.main(['install', '--quiet', 're'])
+    pip.main(['install', '--quiet', 'pickle'])
+    pip.main(['install', '--quiet', 'tkinter'])
+    pip.main(['install', '--quiet', 'threading'])
+    pip.main(['install', '--quiet', 'keyboard'])
+
+    import selenium.common.exceptions
+    from selenium.webdriver.common.by import By
+    from openpyxl import load_workbook
+    from selenium import webdriver
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as ec
+    from enum import Enum
+
+    import re
+    import pickle
+    import time
+    import tkinter as tk
+    import threading
+    import keyboard
 
 
 def parse_excel_file(path):
@@ -129,6 +156,7 @@ class WebAPI:
                 if self.event_stop_thread.is_set():
                     break
                 if q_a[0] not in questions:
+                    input_fields[count_processed_input_filed].clear()
                     input_fields[count_processed_input_filed].send_keys(q_a[1])
                     count_processed_input_filed += 1
 
@@ -244,7 +272,7 @@ class WebAPI:
 
     def try_find_block_questions(self, make_page_green):
         t_end = time.time() + 30
-        self.driver.implicitly_wait(1)
+        self.driver.implicitly_wait(0.5)
         self.driver.switch_to.default_content()
         while t_end > time.time():
             if self.event_stop_thread.is_set():
@@ -555,8 +583,8 @@ class App(tk.Tk):
         elif self.behaviour_after_end_filling_answers is BehaviourEndFillingAnswers.wait_until_pressed_key:
             threading.Thread(target=self.wait_until_press_enter).start()
         else:
-            self.send_answers()
-            self.start_auto_filling()
+            if self.send_answers():
+                self.start_auto_filling()
 
     def on_can_not_fill_answers(self, answers):
         self.log('Невозможно заполнить поля ответов. Ответы для всего модуля:')
@@ -578,10 +606,12 @@ class App(tk.Tk):
     def send_answers(self):
         if self.web_api.try_send_answer():
             self.web_api.load_next_page()
+            return True
         else:
             self.log("Невозможно отправить ответы")
             self.stop_auto_filling_button['state'] = tk.DISABLED
             self.start_auto_filling_button['state'] = tk.NORMAL
+            return False
 
     def run_browser(self):
         if self.th is not None:
