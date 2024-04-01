@@ -419,7 +419,7 @@ class App(tk.Tk):
         self.link_field.insert(tk.END, self.link)
         self.login_field = tk.Entry(self)
         self.login_field.insert(tk.END, self.login)
-        self.password_field = tk.Entry(self, show='*')
+        self.password_field = tk.Entry(self)
         self.password_field.insert(tk.END, self.password)
         self.duration_between_answering_field = tk.Entry(self)
         self.duration_between_answering_field.insert(tk.END, self.duration_between_answering)
