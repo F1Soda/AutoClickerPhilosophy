@@ -593,7 +593,7 @@ class App(tk.Tk):
         self.th.start()
 
     def close_application(self):
-        self.joke1 = self.joke2 = self.joke3 = None
+        #self.joke1 = self.joke2 = self.joke3 = None
         self.save_user_data()
         self.web_api.quit()
         self.quit()
