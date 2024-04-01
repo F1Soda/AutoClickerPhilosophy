@@ -153,6 +153,12 @@ class WebAPI:
         if len(input_fields) != 0:
             count_processed_input_filed = 0
             for q_a in self.get_last_answers(theme_answers, len(input_fields)):
+                if q_a[0] == 'Каково назначение ученого, по Фихте?':
+                    self.log_event("Не могу вставить ответ в поле")
+                    self.log_event("Ответ для поля: абстрактным")
+                    self.driver.implicitly_wait(self.waiting_time)
+                    return None
+
                 if self.event_stop_thread.is_set():
                     break
                 if q_a[0] not in questions:
