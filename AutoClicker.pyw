@@ -127,6 +127,11 @@ class WebAPI:
         self.driver.switch_to.default_content()
         title = self.driver.find_element(By.XPATH,
                                          value="//a[@class='text-primary-500'][contains(text(), 'Тема')]").text
+        test_module = self.driver.find_element(By.XPATH, "//h1[@class='mb-0 h3']").text
+        if test_module == 'Тест по материалам лекции 10':
+            self.log_event("Не могу вставить ответ в checkbox's")
+            self.log_event("Ответы : 1)Сэмюэля Александера, Моргана Конви Ллойда 2)принцип всеобщей связи, принцип становления, принцип историзма")
+
         self.driver.implicitly_wait(1)
         is_independent_work = len(
             self.driver.find_elements(By.XPATH, "//h1[@class='mb-0 h3'][contains(text(),'Самостоятельная')]")) == 1
