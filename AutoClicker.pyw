@@ -242,7 +242,7 @@ class WebAPI:
                 counter += 1
         return counter == len(buttons_next)
 
-    def try_find_block_questions(self):
+    def try_find_block_questions(self, make_page_green):
         t_end = time.time() + 30
         self.driver.implicitly_wait(1)
         self.driver.switch_to.default_content()
@@ -256,7 +256,8 @@ class WebAPI:
                 self.driver.switch_to.frame(frame)
                 self.driver.find_element(By.XPATH, value='//div[@class="problem"]')
             except selenium.common.exceptions.NoSuchElementException:
-                self.make_page_green()
+                if make_page_green:
+                    self.make_page_green()
                 self.load_next_page()
             else:
                 self.driver.implicitly_wait(self.waiting_time)
@@ -285,6 +286,8 @@ class WebAPI:
             self.driver.close()
             self.driver.switch_to.window(self.driver.window_handles[0])
             return None
+
+        return None
 
     def load_next_page(self):
         self.driver.switch_to.default_content()
@@ -454,10 +457,11 @@ class App(tk.Tk):
                        variable=self.show_hide_password_var,
                        onvalue=True,
                        offvalue=False,
-                       command=(lambda: self.checkbutton_show_hide_password_changed(self.show_hide_password_var))).grid(row=2,
-                                                                                                          column=2,
-                                                                                                          sticky=tk.W,
-                                                                                                          pady=4)
+                       command=(lambda: self.checkbutton_show_hide_password_changed(self.show_hide_password_var))).grid(
+            row=2,
+            column=2,
+            sticky=tk.W,
+            pady=4)
         self.set_green_page_var = tk.IntVar(value=self.make_page_green)
         tk.Checkbutton(self,
                        text='Делать странички зелёными?\n(для эстетов)',
@@ -491,7 +495,7 @@ class App(tk.Tk):
         self.start_auto_filling_button['state'] = tk.DISABLED
         self.stop_auto_filling_button['state'] = tk.NORMAL
         self.web_api.event_stop_thread.clear()
-        self.th = threading.Thread(target=self.web_api.try_find_block_questions)
+        self.th = threading.Thread(target=self.web_api.try_find_block_questions, args=(self.set_green_page_var.get(),))
         self.th.start()
 
     def start_auto_filling(self):
@@ -513,7 +517,8 @@ class App(tk.Tk):
             if not self.joke1:
                 threading.Thread(target=self.log_letter_by_letter,
                                  args=(
-                                     'Чего боишься? Всё равно у тебя один и тот же пароль на нескольких сайтах.', None)).start()
+                                     'Чего боишься? Всё равно у тебя один и тот же пароль на нескольких сайтах.',
+                                     None)).start()
                 self.joke1 = True
             self.password_field.configure(show="*")
         else:
@@ -525,9 +530,10 @@ class App(tk.Tk):
             if not self.joke2[0]:
                 threading.Thread(target=self.log_letter_by_letter,
                                  args=(
-                                 'Чёрт побери, тебе настолько важно видеть зелёные галочки в бесполезном курсе? Я лучше выключу её.', self.set_green_page_var)).start()
+                                     'Чёрт побери, тебе настолько важно видеть зелёные галочки в бесполезном курсе? Я лучше выключу её.',
+                                     self.set_green_page_var)).start()
                 self.make_page_green = False
-                #value.set(False)
+                # value.set(False)
                 self.joke2 = (True, False)
             elif not self.joke2[1]:
                 threading.Thread(target=self.log_letter_by_letter,
