@@ -23,7 +23,7 @@ def parse_excel_file(path):
     while i < 450:
         line = str(sheet[f'A{i}'].value)
         if line.startswith('Тема'):
-            current_theme = re.search(r"(?<=:).+", line).group().strip()
+            current_theme = re.search(r"(?<=:).+", line).group().strip().lower()
             res_dict[current_theme] = {}
             i += 2
             continue
@@ -74,6 +74,8 @@ class WebAPI:
         self.initialized_event = EventDelegate()
         self.end_filling_test_event = EventDelegate()
         self.can_not_filling_test_event = EventDelegate()
+        self.on_find_page_with_questions = EventDelegate()
+        self.log_event = EventDelegate()
         self.event_stop_thread = threading.Event()
 
     def initialize(self, password, login, auto_filling_mode, link, browser):
@@ -98,54 +100,122 @@ class WebAPI:
         self.driver.switch_to.default_content()
         title = self.driver.find_element(By.XPATH,
                                          value="//a[@class='text-primary-500'][contains(text(), 'Тема')]").text
-        theme = ' '.join(title.split()[2:])
+        self.driver.implicitly_wait(1)
+        is_independent_work = len(
+            self.driver.find_elements(By.XPATH, "//h1[@class='mb-0 h3'][contains(text(),'Самостоятельная')]")) == 1
+        theme = ' '.join(title.split()[2:]).lower()
         theme_answers = answers[theme]
         frame = self.driver.find_element(by=By.XPATH, value="//iframe[@id='unit-iframe']")
         self.driver.switch_to.frame(frame)
-        self.driver.implicitly_wait(5)
 
-        question_blocks = self.driver.find_elements(By.XPATH,
-                                                    value='//legend[@class="response-fieldset-legend field-group-hd"]')
-        if len(question_blocks) == 0:
-            self.driver.implicitly_wait(self.waiting_time)
-            count_last_questions = len(self.driver.find_elements(By.XPATH, value='//div[@class="problem"]'))
-            i = 0
-            return_value = []
-            answers = theme_answers.items()
-            for answer in answers:
-                if i >= len(answers) - count_last_questions - 1:
-                    return_value.append(answer)
-                i += 1
-            self.can_not_filling_test_event(return_value)
-            return None
+        questions = self.driver.find_elements(By.XPATH,
+                                              value='//legend[@class="response-fieldset-legend field-group-hd"]')
 
-        self.driver.implicitly_wait(self.waiting_time)
-        for question_block in question_blocks:
+        for question in questions:
+            question = question.text
             if self.event_stop_thread.is_set():
                 break
-            question = question_block.text
             answer = theme_answers[question]
-            if '___' in question:
-                input_field = self.driver.driver.find_element(By.XPATH,
-                                                              value=self.__generate_xpath_for_input_field_question(
-                                                                  question))
-                input_field.sendkeys(answer)
-            else:
-                button = self.driver.find_element(By.XPATH,
-                                                  value=self.__generate_xpath_for_point_question(question, answer))
-                button.click()
-
+            for answer in answer.split('\n'):
+                self.driver.find_element(By.XPATH,
+                                         value=self.__generate_xpath_for_point_question(question, answer)).click()
             time.sleep(duration_sleep)
 
+        input_fields = self.driver.find_elements(By.XPATH, value='//input[@type="text"]')
+
+        if len(input_fields) != 0:
+            count_processed_input_filed = 0
+            for q_a in self.get_last_answers(theme_answers, len(input_fields)):
+                if self.event_stop_thread.is_set():
+                    break
+                if q_a[0] not in questions:
+                    input_fields[count_processed_input_filed].send_keys(q_a[1])
+                    count_processed_input_filed += 1
+
+        p_blocks = self.driver.find_elements(By.XPATH, value='//div[@class="problem"]//p')
+
+        if len(p_blocks) != 0 and not is_independent_work:
+            for i in range(len(p_blocks)):
+                if p_blocks[i].text in theme_answers:
+                    answer = theme_answers[p_blocks[i].text]
+                    for ans in answer.split('\n'):
+                        if self.event_stop_thread.is_set():
+                            break
+                        self.driver.find_element(By.XPATH,
+                                                 self.__generate_xpath_for_point_question_p_tag(ans,
+                                                                                                i + 1)).click()
+
+        if len(questions) == 0 and is_independent_work:
+            try:
+                questions = self.driver.find_elements(By.XPATH, value='//div[@class="wrapper-problem-response"]')
+                if len(questions) != 0:
+                    q_as = self.get_last_answers(theme_answers, len(questions))
+                    for i in range(len(q_as)):
+                        if self.event_stop_thread.is_set():
+                            break
+                        self.driver.find_element(By.XPATH,
+                                                 self.__generate_xpath_for_point_question_wrapper_problem(
+                                                     q_as[i][1])).click()
+            except selenium.common.exceptions.NoSuchElementException:
+                pass
+
+        self.driver.implicitly_wait(self.waiting_time)
         self.end_filling_test_event()
 
+    def get_last_answers(self, theme_answers, count):
+        self.driver.implicitly_wait(self.waiting_time)
+        i = 0
+        res_answers = []
+        answers = theme_answers.items()
+        for answer in answers:
+            if i >= len(answers) - count - 1:
+                if answer[1] is None:
+                    continue
+                res_answers.append(answer)
+            i += 1
+        return res_answers
+
     def __generate_xpath_for_point_question(self, question, answer):
+        # //legend[@class='response-fieldset-legend field-group-hd'][contains(text(), '1.')][contains(text(), 'Комплекс')][contains(text(), 'вопросов')]/..//label[contains(text(), 'неклассической')]
         res = "//legend[@class='response-fieldset-legend field-group-hd']"
         key_word = question.split()
-        count_iteration = 5 if len(key_word) > 5 else len(key_word)
+        count_iteration = 10 if len(key_word) > 10 else len(key_word)
         for word in key_word[:count_iteration]:
             res += f"[contains(text(), '{word}')]"
-        res += "/..//label[contains(@id, 'choice')]"
+        res += "/..//label"
+        key_word = answer.split()
+        count_iteration = 5 if len(key_word) > 5 else len(key_word)
+        index = 2
+        count_inner_iterations = 0
+        for word in key_word[:count_iteration]:
+            res += f"[starts-with(substring(text(), {index}, {100}), '{word}')"
+            for i in range(1, count_inner_iterations + 1):
+                res += f"or starts-with(substring(text(), {index + i}, {100}), '{word}')"
+            res += ']'
+            count_inner_iterations += 1
+            index += len(word) + 1
+        return res
+
+    def __generate_xpath_for_point_question_p_tag(self, answer, index):
+        # //div[@class='problem']//p[4]//following::div[1]/..//label[starts-with(substring(text(), 28, 100), 'но')  or starts-with(substring(text(), 29, 100), 'но')or starts-with(substring(text(), 30, 100), 'но')or starts-with(substring(text(), 31, 100), 'но')]
+
+        res = f"//div[@class='problem']//p[{index}]//following::div[1]"
+        res += "//label"
+        key_word = answer.split()
+        count_iteration = 7 if len(key_word) > 7 else len(key_word)
+        index = 2
+        count_inner_iterations = 0
+        for word in key_word[:count_iteration]:
+            res += f"[starts-with(substring(text(), {index}, {100}), '{word}')"
+            for i in range(1, count_inner_iterations + 1):
+                res += f"or starts-with(substring(text(), {index + i}, {100}), '{word}')"
+            res += ']'
+            count_inner_iterations += 1
+            index += len(word) + 1
+        return res
+
+    def __generate_xpath_for_point_question_wrapper_problem(self, answer):
+        res = "//div[@class='wrapper-problem-response']//label"
         key_word = answer.split()
         count_iteration = 5 if len(key_word) > 5 else len(key_word)
         for word in key_word[:count_iteration]:
@@ -162,30 +232,59 @@ class WebAPI:
         return res
 
     def try_send_answer(self):
-        button_next = self.driver.find_element(By.XPATH, '//button[@data-submitting="Отправка"]')
-        if button_next.get_attribute('data-should-enable-submit-button') == 'False':
-            return False
-        else:
-            button_next.click()
-            return True
+        counter = 0
+        buttons_next = self.driver.find_elements(By.XPATH, '//button[@data-submitting="Отправка"]')
+        for button in buttons_next:
+            if button.get_attribute('data-should-enable-submit-button') == 'False':
+                continue
+            else:
+                button.click()
+                counter += 1
+        return counter == len(buttons_next)
 
     def try_find_block_questions(self):
         t_end = time.time() + 30
         self.driver.implicitly_wait(1)
         self.driver.switch_to.default_content()
         while t_end > time.time():
+            if self.event_stop_thread.is_set():
+                self.driver.switch_to.default_content()
+                self.log_event('Остановка автозаполнения')
+                return None
             try:
                 frame = self.driver.find_element(by=By.XPATH, value="//iframe[@id='unit-iframe']")
                 self.driver.switch_to.frame(frame)
                 self.driver.find_element(By.XPATH, value='//div[@class="problem"]')
             except selenium.common.exceptions.NoSuchElementException:
+                self.make_page_green()
                 self.load_next_page()
             else:
                 self.driver.implicitly_wait(self.waiting_time)
                 self.found_page_with_test_event()
                 return True
         self.driver.switch_to.default_content()
+        self.log_event('Невозможно найти страницу с тестом')
         return False
+
+    def make_page_green(self):
+        play_video_buttons = self.driver.find_elements(By.XPATH,
+                                                       "//button[@class='plyr__control plyr__control--overlaid']")
+        if len(play_video_buttons) != 0:
+            self.driver.find_element(By.XPATH, "//button[@class='plyr__control'][@data-plyr='mute']").click()
+            play_video_buttons[0].click()
+            time.sleep(5)
+            return None
+        links = self.driver.find_elements(By.XPATH,
+                                          "//a[contains(text(), 'Конспект') or contains(text(), 'Презентация')]")
+        if len(links) != 0:
+            self.driver.execute_script("window.open('');")
+            link = links[0].get_attribute('href')
+            self.driver.switch_to.window(self.driver.window_handles[1])
+            self.driver.get(link)
+            time.sleep(5)
+            self.driver.close()
+            self.driver.switch_to.window(self.driver.window_handles[0])
+            return None
 
     def load_next_page(self):
         self.driver.switch_to.default_content()
@@ -199,6 +298,8 @@ class WebAPI:
 class App(tk.Tk):
     def __init__(self, web_api, link=''):
         super().__init__()
+        self.show_hide_password = None
+        self.joke1 = None
         self.login_field = None
         self.start_auto_filling_button = None
         self.stop_auto_filling_button = None
@@ -217,12 +318,18 @@ class App(tk.Tk):
         self.th = None
         self.auto_filling_flag = False
         self.link = link
+        self.make_page_green = False
+        self.joke1 = None
+        self.joke2 = None
+        self.joke3 = None
         self.duration_between_answering = '0'
         self.behaviour_after_end_filling_answers = BehaviourEndFillingAnswers.do_nothing
         self.user_browser = AvailableBrowsers.edge
         self.web_api.initialized_event += self.set_button_start_auto_filling_enable
         self.web_api.end_filling_test_event += self.on_end_filling_answers
         self.web_api.can_not_filling_test_event += self.on_can_not_fill_answers
+        self.web_api.found_page_with_test_event += self.start_auto_filling
+        self.web_api.log_event += self.log
         self.initialize_gui()
 
     def load_user_data(self):
@@ -236,6 +343,11 @@ class App(tk.Tk):
                 self.duration_between_answering = data['duration_between_answering']
                 self.behaviour_after_end_filling_answers = data['behaviour_after_end_filling_answers']
                 self.user_browser = data['user_browser']
+                self.make_page_green = data['make_page_green']
+                self.show_hide_password = data['show_hide_password']
+                self.joke1 = data['joke1']
+                self.joke2 = data['joke2']
+                self.joke3 = data['joke3']
             self.answers = self.try_get_dict_answers()
         except FileNotFoundError:
             self.log("Файл с сохранёнными данными не найден")
@@ -251,7 +363,12 @@ class App(tk.Tk):
             'duration_between_answering': self.duration_between_answering_field.get(),
             'behaviour_after_end_filling_answers': BehaviourEndFillingAnswers[
                 self.current_behaviour_tk_StringVar.get().replace(' ', '_')],
-            'user_browser': AvailableBrowsers[self.user_browser_StringVar.get()]
+            'user_browser': AvailableBrowsers[self.user_browser_StringVar.get()],
+            'make_page_green': self.make_page_green,
+            'show_hide_password': self.show_hide_password_var.get(),
+            'joke1': False if self.joke1 is None else self.joke1,
+            'joke2': (False, False) if self.joke2 is None else self.joke2,
+            'joke3': False if self.joke3 is None else self.joke3,
         }
         with open(r'user_data.txt', 'wb') as f:
             pickle.dump(dict_to_save, f)
@@ -261,9 +378,19 @@ class App(tk.Tk):
         self.console_text_box.insert(tk.END, str(message) + '\n')
         self.console_text_box['state'] = tk.DISABLED
 
+    def log_letter_by_letter(self, message, checkbox):
+        self.console_text_box['state'] = tk.NORMAL
+        for letter in str(message):
+            self.console_text_box.insert(tk.END, letter)
+            time.sleep(0.025)
+        self.console_text_box.insert(tk.END, '\n')
+        if checkbox is not None:
+            checkbox.set(False)
+        self.console_text_box['state'] = tk.DISABLED
+
     def initialize_gui(self):
         self.console_text_box = tk.Text(self, height=10, width=60, state=tk.DISABLED)
-        self.console_text_box.grid(row=7, column=0, columnspan=3)
+        self.console_text_box.grid(row=8, column=0, columnspan=3)
         self.log("Логгер")
         self.load_user_data()
 
@@ -272,7 +399,7 @@ class App(tk.Tk):
         tk.Label(self, text="Пароль").grid(row=2)
         tk.Label(self, text="Задержка ввода в секундах").grid(row=3)
         tk.Label(self, text="Поведение после заполнения").grid(row=4)
-        tk.Label(self, text="Запускаемый браузер").grid(row=6)
+        tk.Label(self, text="Запускаемый браузер").grid(row=7)
 
         self.current_behaviour_tk_StringVar = tk.StringVar()
         self.current_behaviour_tk_StringVar.set(self.behaviour_after_end_filling_answers.name.replace('_', ' '))
@@ -286,7 +413,7 @@ class App(tk.Tk):
         self.browser_drop_down_menu = tk.OptionMenu(self, self.user_browser_StringVar,
                                                     *[browser.name for browser in
                                                       AvailableBrowsers])
-        self.browser_drop_down_menu.grid(row=6, column=1)
+        self.browser_drop_down_menu.grid(row=7, column=1)
 
         self.link_field = tk.Entry(self)
         self.link_field.insert(tk.END, self.link)
@@ -321,22 +448,32 @@ class App(tk.Tk):
                                                                                                          column=1,
                                                                                                          sticky=tk.W,
                                                                                                          pady=4))
-        show_hide_var = tk.IntVar(value=1)
+        self.show_hide_password_var = tk.IntVar(value=self.show_hide_password)
         tk.Checkbutton(self,
                        text='Скрыть/Показать',
-                       variable=show_hide_var,
+                       variable=self.show_hide_password_var,
                        onvalue=True,
                        offvalue=False,
-                       command=(lambda: self.checkbutton_show_hide_password_changed(show_hide_var))).grid(row=2,
+                       command=(lambda: self.checkbutton_show_hide_password_changed(self.show_hide_password_var))).grid(row=2,
                                                                                                           column=2,
                                                                                                           sticky=tk.W,
                                                                                                           pady=4)
+        self.set_green_page_var = tk.IntVar(value=self.make_page_green)
+        tk.Checkbutton(self,
+                       text='Делать странички зелёными?\n(для эстетов)',
+                       variable=self.set_green_page_var,
+                       onvalue=True,
+                       offvalue=False,
+                       command=(lambda: self.checkbutton_set_green_page_changed(self.set_green_page_var))).grid(row=6,
+                                                                                                                column=1,
+                                                                                                                sticky=tk.W,
+                                                                                                                pady=4)
 
         tk.Button(self, text='Запустить браузер', command=self.run_browser).grid(row=15,
                                                                                  column=1,
                                                                                  pady=4)
 
-        self.start_auto_filling_button = tk.Button(self, text='Начать заполнение', command=self.start_auto_filling,
+        self.start_auto_filling_button = tk.Button(self, text='Начать заполнение', command=self.try_find_element,
                                                    state=tk.DISABLED)
         self.start_auto_filling_button.grid(row=16,
                                             column=1,
@@ -350,16 +487,17 @@ class App(tk.Tk):
 
         self.mainloop()
 
-    def start_auto_filling(self):
+    def try_find_element(self):
         self.start_auto_filling_button['state'] = tk.DISABLED
         self.stop_auto_filling_button['state'] = tk.NORMAL
         self.web_api.event_stop_thread.clear()
-        if self.web_api.try_find_block_questions():
-            self.th = threading.Thread(target=self.web_api.start_answering,
-                                       args=(self.answers, (int(self.duration_between_answering_field.get())),))
-            self.th.start()
-        else:
-            self.log("Невозможно найти страницу с тестом")
+        self.th = threading.Thread(target=self.web_api.try_find_block_questions)
+        self.th.start()
+
+    def start_auto_filling(self):
+        self.th = threading.Thread(target=self.web_api.start_answering,
+                                   args=(self.answers, (int(self.duration_between_answering_field.get())),))
+        self.th.start()
 
     def stop_auto_filling(self):
         self.stop_auto_filling_button['state'] = tk.DISABLED
@@ -372,9 +510,32 @@ class App(tk.Tk):
 
     def checkbutton_show_hide_password_changed(self, value):
         if value.get():
+            if not self.joke1:
+                threading.Thread(target=self.log_letter_by_letter,
+                                 args=(
+                                     'Чего боишься? Всё равно у тебя один и тот же пароль на нескольких сайтах.', None)).start()
+                self.joke1 = True
             self.password_field.configure(show="*")
         else:
             self.password_field.configure(show="")
+
+    def checkbutton_set_green_page_changed(self, value):
+        if value.get():
+            self.make_page_green = True
+            if not self.joke2[0]:
+                threading.Thread(target=self.log_letter_by_letter,
+                                 args=(
+                                 'Чёрт побери, тебе настолько важно видеть зелёные галочки в бесполезном курсе? Я лучше выключу её.', self.set_green_page_var)).start()
+                self.make_page_green = False
+                #value.set(False)
+                self.joke2 = (True, False)
+            elif not self.joke2[1]:
+                threading.Thread(target=self.log_letter_by_letter,
+                                 args=(
+                                     'Сраный эстет.', None)).start()
+                self.joke2 = (True, True)
+        else:
+            self.make_page_green = False
 
     def set_button_start_auto_filling_enable(self):
         self.start_auto_filling_button['state'] = tk.NORMAL
@@ -389,6 +550,7 @@ class App(tk.Tk):
             threading.Thread(target=self.wait_until_press_enter).start()
         else:
             self.send_answers()
+            self.start_auto_filling()
 
     def on_can_not_fill_answers(self, answers):
         self.log('Невозможно заполнить поля ответов. Ответы для всего модуля:')
@@ -402,6 +564,7 @@ class App(tk.Tk):
             try:  # used try so that if user pressed other than the given key error will not be shown
                 if keyboard.is_pressed('enter'):  # if key 'q' is pressed
                     self.send_answers()
+                    self.start_auto_filling()
                     break  # finishing the loop
             except:
                 continue
@@ -424,11 +587,14 @@ class App(tk.Tk):
         self.th.start()
 
     def close_application(self):
+        self.joke1 = self.joke2 = self.joke3 = None
         self.save_user_data()
         self.web_api.quit()
         self.quit()
 
     def try_get_dict_answers(self):
+        # with open(r'dictionary_with_answers.txt', 'wb') as f:
+        #     pickle.dump(parse_excel_file(r"E:\Downloads\Telegram Desktop\Filosofia.xlsx"), f)
         try:
             with open(r'dictionary_with_answers.txt', 'rb') as f:
                 return pickle.load(f)
