@@ -129,8 +129,14 @@ class WebAPI:
                                          value="//a[@class='text-primary-500'][contains(text(), 'Тема')]").text
         test_module = self.driver.find_element(By.XPATH, "//h1[@class='mb-0 h3']").text
         if test_module == 'Тест по материалам лекции 10':
-            self.log_event("Не могу вставить ответ в checkbox's")
-            self.log_event("Ответы : 1)Сэмюэля Александера, Моргана Конви Ллойда 2)принцип всеобщей связи, принцип становления, принцип историзма")
+            frame = self.driver.find_element(by=By.XPATH, value="//iframe[@id='unit-iframe']")
+            self.driver.switch_to.frame(frame)
+            self.driver.find_element(By.XPATH, '//label[contains(text(),"Сэмюэля Александера")]').click()
+            self.driver.find_element(By.XPATH, '//label[contains(text(),"Моргана Конви Ллойда")]').click()
+            self.driver.find_element(By.XPATH, '//label[contains(text(),"принцип всеобщей связи")]').click()
+            self.driver.find_element(By.XPATH, '//label[contains(text(),"принцип становления")]').click()
+            self.driver.find_element(By.XPATH, '//label[contains(text(),"принцип историзма")]').click()
+            self.driver.switch_to.default_content()
 
         self.driver.implicitly_wait(1)
         is_independent_work = len(
@@ -159,10 +165,10 @@ class WebAPI:
             count_processed_input_filed = 0
             for q_a in self.get_last_answers(theme_answers, len(input_fields)):
                 if q_a[0] == 'Каково назначение ученого, по Фихте?':
-                    self.log_event("Не могу вставить ответ в поле")
-                    self.log_event("Ответ для поля: абстрактным")
-                    self.driver.implicitly_wait(self.waiting_time)
-                    return None
+                    input = self.driver.find_element(By.XPATH, '//input[@type="text"]')
+                    input.clear()
+                    input.send_keys('абстрактным')
+                    continue
 
                 if self.event_stop_thread.is_set():
                     break
@@ -236,8 +242,6 @@ class WebAPI:
         return res
 
     def __generate_xpath_for_point_question_p_tag(self, answer, index):
-        # //div[@class='problem']//p[4]//following::div[1]/..//label[starts-with(substring(text(), 28, 100), 'но')  or starts-with(substring(text(), 29, 100), 'но')or starts-with(substring(text(), 30, 100), 'но')or starts-with(substring(text(), 31, 100), 'но')]
-
         res = f"//div[@class='problem']//p[{index}]//following::div[1]"
         res += "//label"
         key_word = answer.split()
@@ -271,8 +275,10 @@ class WebAPI:
         return res
 
     def try_send_answer(self):
+        self.driver.implicitly_wait(0.1)
         counter = 0
         buttons_next = self.driver.find_elements(By.XPATH, '//button[@data-submitting="Отправка"]')
+        self.driver.implicitly_wait(self.waiting_time)
         for button in buttons_next:
             if button.get_attribute('data-should-enable-submit-button') == 'False':
                 continue
@@ -307,13 +313,23 @@ class WebAPI:
         return False
 
     def make_page_green(self):
+        self.driver.implicitly_wait(5)
+
         play_video_buttons = self.driver.find_elements(By.XPATH,
                                                        "//button[@class='plyr__control plyr__control--overlaid']")
         if len(play_video_buttons) != 0:
             self.driver.find_element(By.XPATH, "//button[@class='plyr__control'][@data-plyr='mute']").click()
             play_video_buttons[0].click()
-            time.sleep(5)
+            time.sleep(4)
             return None
+        self.driver.implicitly_wait(0.1)
+
+        practice_task = self.driver.find_elements(By.XPATH, '//h1[@class="mb-0 h3"][contains(text(), "Практическое")]')
+        if len(practice_task) != 0:
+            return None
+
+
+
         links = self.driver.find_elements(By.XPATH,
                                           "//a[contains(text(), 'Конспект') or contains(text(), 'Презентация')]")
         if len(links) != 0:
@@ -340,6 +356,7 @@ class WebAPI:
 class App(tk.Tk):
     def __init__(self, web_api, link=''):
         super().__init__()
+        self.stop_loop_waiting_answer = False
         self.show_hide_password = None
         self.joke1 = None
         self.login_field = None
@@ -469,6 +486,8 @@ class App(tk.Tk):
         self.link_field.grid(row=0, column=1)
         self.login_field.grid(row=1, column=1)
         self.password_field.grid(row=2, column=1)
+        if self.show_hide_password:
+            self.password_field.configure(show="*")
         self.duration_between_answering_field.grid(row=3, column=1)
 
         tk.Button(self,
@@ -545,6 +564,8 @@ class App(tk.Tk):
     def stop_auto_filling(self):
         self.stop_auto_filling_button['state'] = tk.DISABLED
         self.start_auto_filling_button['state'] = tk.NORMAL
+        if self.behaviour_drop_down_menu == BehaviourEndFillingAnswers.wait_until_pressed_key:
+            self.stop_loop_waiting_answer = True
         self.web_api.event_stop_thread.set()
         self.web_api.driver.switch_to.default_content()
 
@@ -592,10 +613,12 @@ class App(tk.Tk):
             self.stop_auto_filling_button['state'] = tk.DISABLED
             self.set_button_start_auto_filling_enable()
         elif self.behaviour_after_end_filling_answers is BehaviourEndFillingAnswers.wait_until_pressed_key:
+            self.send_answers()
+            self.log("Ожидание нажатия Enter")
             threading.Thread(target=self.wait_until_press_enter).start()
         else:
             if self.send_answers():
-                self.start_auto_filling()
+                self.try_find_element()
 
     def on_can_not_fill_answers(self, answers):
         self.log('Невозможно заполнить поля ответов. Ответы для всего модуля:')
@@ -605,23 +628,33 @@ class App(tk.Tk):
         self.start_auto_filling_button['state'] = tk.NORMAL
 
     def wait_until_press_enter(self):
+        timer = time.time()
         while True:  # making a loop
             try:  # used try so that if user pressed other than the given key error will not be shown
                 if keyboard.is_pressed('enter'):  # if key 'q' is pressed
-                    self.send_answers()
-                    self.start_auto_filling()
+                    self.log("Нажато!\n")
+                    self.web_api.load_next_page()
+                    self.try_find_element()
                     break  # finishing the loop
+                if self.stop_loop_waiting_answer:
+                    self.stop_loop_waiting_answer = False
+                    break
             except:
                 continue
 
+
     def send_answers(self):
         if self.web_api.try_send_answer():
-            self.web_api.load_next_page()
+            if self.behaviour_after_end_filling_answers == BehaviourEndFillingAnswers.send:
+                self.web_api.load_next_page()
             return True
         else:
             self.log("Невозможно отправить ответы")
-            self.stop_auto_filling_button['state'] = tk.DISABLED
-            self.start_auto_filling_button['state'] = tk.NORMAL
+            if self.behaviour_after_end_filling_answers == BehaviourEndFillingAnswers.wait_until_pressed_key:
+                self.log("Пропускаем и идём дальше?")
+            else:
+                self.stop_auto_filling_button['state'] = tk.DISABLED
+                self.start_auto_filling_button['state'] = tk.NORMAL
             return False
 
     def run_browser(self):
